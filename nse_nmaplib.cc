@@ -64,18 +64,16 @@ void set_version (lua_State *L, const struct serviceDeductions *sd)
  * */
 void set_portinfo (lua_State *L, const Target *target, const Port *port)
 {
-  struct serviceDeductions sd;
-
-  target->ports.getServiceDeductions(port->portno, port->proto, &sd);
+  const serviceDeductions *sd = target->ports.getServiceDeductions(port->portno, port->proto);
 
   nseU_setifield(L, -1, "number", port->portno);
-  nseU_setsfield(L, -1, "service", sd.name);
+  nseU_setsfield(L, -1, "service", sd->name);
   nseU_setsfield(L, -1, "protocol", IPPROTO2STR(port->proto));
   nseU_setsfield(L, -1, "state", statenum2str(port->state));
   nseU_setsfield(L, -1, "reason", reason_str(port->reason.reason_id, 1));
   nseU_setifield(L, -1, "reason_ttl", port->reason.ttl);
   lua_createtable(L, 0, NSE_NUM_VERSION_FIELDS);
-  set_version(L, &sd);
+  set_version(L, sd);
   lua_setfield(L, -2, "version");
 }
 
@@ -83,7 +81,10 @@ void set_portinfo (lua_State *L, const Target *target, const Port *port)
    an unknown address family, push nil. */
 static void push_bin_ip(lua_State *L, const struct sockaddr_storage *ss)
 {
-  if (ss->ss_family == AF_INET) {
+  if (!ss) {
+    lua_pushnil(L);
+  }
+  else if (ss->ss_family == AF_INET) {
     const struct sockaddr_in *sin;
 
     sin = (struct sockaddr_in *) ss;
@@ -679,14 +680,13 @@ static int l_get_version_intensity (lua_State *L)
     int is_script_intensity_set;
     int script_intensity;
 
-    lua_getglobal(L, "nmap");
-    lua_getfield(L, -1, "registry");
+    lua_pushvalue(L, lua_upvalueindex(1)); /* nmap.registry */
     lua_getfield(L, -1, "args");
     lua_getfield(L, -1, "script-intensity");
 
     script_intensity = lua_tointegerx(L, lua_gettop(L), &is_script_intensity_set);
 
-    lua_pop(L, 4);
+    lua_pop(L, 3);
 
     if (is_script_intensity_set) {
       if (script_intensity < 0 || script_intensity > 9)
@@ -1040,8 +1040,13 @@ int luaopen_nmap (lua_State *L)
   lua_pushcclosure(L, l_condvar, 1); /* condvar function */
   lua_setfield(L, nmap_idx, "condvar");
 
-  lua_newtable(L);
+  lua_newtable(L); /* nmap.registry */
+  /* Copy nmap.registry. One copy to set nmap["registry"] */
+  lua_pushvalue(L, -1);
   lua_setfield(L, nmap_idx, "registry");
+  /* and the other as upvalue for l_get_version_intensity. */
+  lua_pushcclosure(L, l_get_version_intensity, 1);
+  lua_setfield(L, nmap_idx, "version_intensity");
 
   /* Pull out some functions from the nmap.socket and nmap.dnet libraries.
      http://seclists.org/nmap-dev/2012/q1/299. */
